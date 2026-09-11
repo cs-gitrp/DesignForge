@@ -1,28 +1,30 @@
-# LLD Practice Lab
+# DesignForge
 
-A focused practice tool for low-level design. One learner journey, end to end:
+A focused practice tool for low-level design interviews. The product is built around one learner journey:
 
 **Choose a problem → design it in structured sections → submit → get evidence-based feedback → review → try again.**
 
-Three seeded problems: Parking Lot, Vending Machine, Elevator System.
+Three seeded problems are included: **Parking Lot, Vending Machine, and Elevator System**.
 
 ## Running locally
 
 ```bash
-bun install
-bun run dev      # http://localhost:8080
-bun run test     # unit tests (domain + application layers)
+npm install
+npm run dev      # http://localhost:8080
+npm run test     # unit tests
+npm run build    # production build
+npm run lint
 ```
 
-AI evaluation requires either `LOVABLE_API_KEY` (present automatically when the project is connected
-to Lovable Cloud) or `GEMINI_API_KEY` (standalone runs — see `.env.example`); with neither set the
-app still works end to end on the deterministic structural fallback, clearly labelled as such in the
-UI.
+Create a local `.env` from `.env.example`.
 
-The database schema and the three problems are created by the migration in `supabase/migrations/`.
-No sign-in is required: attempts are anonymous and scoped to the browser by an HTTP-only cookie, so
-one browser only ever sees its own attempts.
+AI evaluation uses either `GEMINI_API_KEY` for direct Gemini evaluation or `LOVABLE_API_KEY` for the hosted AI gateway. If neither is configured, the app still works end to end using the deterministic structural evaluator, which is clearly labelled in the UI.
 
+The database schema and the three seeded problems are created by the migrations in `supabase/migrations/`.
+
+No sign-in is required. Attempts are anonymous and scoped to the browser through an HTTP-only learner cookie, so a browser only sees its own attempts.
+
+---
 
 ## The journey
 
@@ -33,102 +35,192 @@ one browser only ever sees its own attempts.
 | `/attempt/$attemptId` | Five structured sections. Save Draft any time; Submit for Review locks the attempt. |
 | evaluation | The attempt moves `SUBMITTED → EVALUATING`, an evaluator scores it, and the result is persisted. |
 | `/attempt/$attemptId/feedback` | Overall score, strengths, improvement areas, and one card per rubric criterion with score, evidence quote, concern, suggestion and confidence. |
-| Try Again | Starts a fresh attempt on the same problem; the old attempt and its feedback stay in history. |
-| `/history` | All attempts grouped by problem, with per-attempt scores, the change since the first scored attempt, and which criteria moved up or down versus the previous completed attempt. |
+| Try Again | Starts a fresh attempt on the same problem; the previous attempt and feedback remain in history. |
+| `/history` | Attempts grouped by problem, with scores, progress and criterion-level movement between completed attempts. |
+
+---
 
 ## Submission format
 
-Every submission is `STRUCTURED_TEXT` with five sections:
+Every submission currently uses `STRUCTURED_TEXT` with five sections:
 
-1. Assumptions
-2. Classes & Responsibilities
-3. Relationships
-4. Design Decisions & Trade-offs
-5. Edge Cases & Testability
+1. **Assumptions**
+2. **Classes & Responsibilities**
+3. **Relationships**
+4. **Design Decisions & Trade-offs**
+5. **Edge Cases & Testability**
 
-A submission with no filled section is rejected before any evaluator runs. Thin sections are flagged
-structurally in the editor without any claim about design quality.
+A completely empty submission is rejected before evaluation. Thin sections are flagged structurally in the editor without making claims about design quality.
+
+The structure is intentional: it gives the learner a consistent way to reason through an LLD problem while giving the evaluator stable evidence to assess.
+
+---
 
 ## Rubric
 
-The eight criteria are shown on the problem page *before* you design, each scored 1–5:
+The eight criteria are shown before the learner starts designing:
 
-Requirement Understanding · Class Responsibilities · Coupling & Cohesion · Encapsulation &
-Interfaces · Abstraction / Patterns · Extensibility · Edge Cases & Testability ·
-Explanation / Trade-offs
+1. Requirement Understanding
+2. Class Responsibilities
+3. Coupling & Cohesion
+4. Encapsulation & Interfaces
+5. Abstraction / Patterns
+6. Extensibility
+7. Edge Cases & Testability
+8. Explanation / Trade-offs
 
-The overall score is always derived by the application as the mean of the eight criterion scores —
-never taken from the model. Every criterion must carry an evidence quote from the learner's own
-text, a specific concern, and one actionable suggestion; output that doesn't is rejected.
+Each criterion is scored from **1–5**.
 
+The overall score is derived by the application as the mean of the eight criterion scores. It is never accepted from the model.
+
+Every criterion must also contain:
+
+- evidence quoted from the learner's submission
+- one specific concern
+- one actionable suggestion
+- confidence
+
+Invalid or incomplete evaluator output is rejected before persistence.
+
+---
 
 ## Architecture
 
 ```text
-src/domain/           pure rules: state machine, submission format, rubric, evaluator port
-src/application/      practice-service.ts — the whole learner journey, framework-free
-src/infrastructure/   Supabase repositories, RuleBasedEvaluator, LlmEvaluator, factory
-src/lib/              server functions (RPC boundary) and query options
-src/routes/           UI
-tests/                unit tests against in-memory fakes
+src/domain/           Pure rules: state machine, submission format,
+                      rubric and evaluator ports
+
+src/application/      PracticeService — owns the learner journey
+                      and its ordering guarantees
+
+src/infrastructure/   Supabase repositories, evaluator implementations
+                      and evaluator factory
+
+src/lib/              Server functions and query options
+
+src/routes/           UI and route-level rendering
+
+tests/                Unit tests using in-memory repositories and
+                      stub evaluators
 ```
 
-The application layer depends only on ports (`src/domain/ports.ts`), so the tests run the real
-journey with in-memory repositories and a fixed clock — no database, no network.
+The application layer depends only on domain ports, so the core learner journey can be tested without a database or external model provider.
+
+---
 
 ## Evaluators
 
-`Evaluator` is an interface (`src/domain/evaluator.ts`) with three implementations:
+`Evaluator` is an interface with three implementations:
 
-- **`LlmEvaluator`** (`type: "LLM"`) — server-only. Calls the Lovable AI gateway with the shared
-  prompt and a strict JSON contract. The hosted default.
-- **`GeminiEvaluator`** (`type: "LLM_GEMINI_DIRECT"`) — server-only. Calls the Gemini API directly
-  (`gemini-3.6-flash`, `responseMimeType: "application/json"`) with `GEMINI_API_KEY`, so the app
-  gives real AI evaluation outside Lovable's hosted environment.
-- **`RuleBasedEvaluator`** (`type: "RULE_BASED"`) — deterministic structural validation only: section
-  coverage and depth, evidence quoted from the learner's text, scores capped below the top of the
-  scale and low confidence. It never claims to judge design quality, and the UI labels it as
-  structural validation rather than AI review. No network, no key, fully testable.
+### LlmEvaluator
 
-Both model evaluators import the same `SYSTEM_PROMPT`, `buildUserPrompt` and JSON contract from
-`src/domain/evaluation-prompt.ts` — the prompt constraints (no reference-solution comparison,
-verbatim evidence, one actionable suggestion per criterion) cannot drift between them — and both
-validate output through the single `parseEvaluationResult` path in `src/domain/rubric.ts`.
+Server-only evaluator using the hosted AI gateway when `LOVABLE_API_KEY` is configured.
 
-`practice-service-factory.server.ts` is the only place that chooses one, in this order:
+### GeminiEvaluator
 
-1. `GEMINI_API_KEY` set → `GeminiEvaluator` (an explicitly set key wins: `LOVABLE_API_KEY` is
-   always present on Lovable Cloud, so Lovable-first would make the Gemini tier unreachable)
-2. else `LOVABLE_API_KEY` set → `LlmEvaluator`
-3. else → `RuleBasedEvaluator`
+Server-only evaluator that calls Gemini directly when `GEMINI_API_KEY` is configured. This keeps the application usable outside the hosted environment.
 
-The stored `evaluatorType` on each evaluation names the path that actually ran — `LLM`,
-`LLM_GEMINI_DIRECT` or `RULE_BASED` — and the feedback page and history show that tier label on
-every attempt, so feedback is never mislabelled. Swapping in a fourth implementation touches that
-one file.
+### RuleBasedEvaluator
 
-Malformed or unusable model output is a controlled failure: the submission is preserved, the
-attempt and evaluation become `FAILED`, and the UI offers Retry Evaluation.
+A deterministic fallback that performs structural validation only:
 
+- section coverage
+- section depth
+- evidence taken from the learner's own text
+
+It deliberately does not claim to judge design quality. Its scores are capped below the top of the scale and its confidence is low. The UI labels this output as **structural validation**, not AI design review.
+
+The evaluator actually used is stored with every evaluation and shown in the UI.
+
+---
+
+## Evaluation and trust boundary
+
+Model output is treated as untrusted input.
+
+All evaluator results pass through the same domain validation path before being persisted. The application verifies:
+
+- all eight criteria are present
+- criterion names are valid
+- scores are integers from 1–5
+- evidence is present
+- confidence is valid
+- the overall score is derived from criterion scores
+
+Malformed or unusable model output becomes a controlled evaluation failure. The learner's submission is preserved and the UI provides a retry path.
+
+The model evaluator runs server-side; provider keys and evaluation instructions are never sent to the browser.
+
+---
 
 ## Attempt state machine
 
 ```text
 DRAFT ──submit──> SUBMITTED ──> EVALUATING ──> COMPLETED
-                                     │
-                                     └──> FAILED ──retry──> EVALUATING
+                                      │
+                                      └──> FAILED ──retry──> EVALUATING
 ```
 
-Only `DRAFT` is editable. `COMPLETED` is terminal — improving means a new attempt.
-Re-submitting an already submitted attempt is rejected as a duplicate.
+Only `DRAFT` attempts are editable.
 
-## Security
+`COMPLETED` is terminal. Improving a design means creating a new attempt, which keeps previous submissions and feedback intact.
 
-The model key lives only in server-side code. `LlmEvaluator` is a `.server.ts` module reached
-exclusively through server functions, so the key, the prompt and the rubric never reach the browser.
+If evaluation fails, the stored submission is preserved and can be evaluated again without requiring the learner to retype it.
+
+---
+
+## Design decisions
+
+A few decisions intentionally keep the MVP focused:
+
+- **No authentication:** the assignment is about the practice loop, not account management.
+- **Three problems:** enough variety to demonstrate the journey without turning the MVP into a content-management system.
+- **Structured text instead of a UML editor:** keeps the submission format simple while still capturing the reasoning an LLD interview evaluates.
+- **Synchronous evaluation:** avoids introducing a queue and worker infrastructure for a small MVP.
+- **No reference-solution scoring:** LLD has multiple valid designs, so feedback evaluates the learner's stated reasoning rather than similarity to one canonical answer.
+- **Deterministic fallback:** the product remains demonstrable and testable even without an AI provider.
+
+---
+
+## Testing
+
+The test suite focuses on the rules that matter to the learner journey:
+
+- state-machine transitions
+- submission validation
+- rubric validation
+- overall score calculation
+- draft saves
+- duplicate submissions
+- evaluation failures
+- retry behaviour
+- attempt numbering
+- anonymous learner ownership
+- evaluator output parsing
+
+The core application tests use in-memory repositories and stub evaluators, so they do not require a live database or model provider.
+
+---
 
 ## Out of scope
 
-No authentication, no course structure, no problem authoring, no leaderboards, no payments.
+The MVP intentionally does not include:
 
-Further reading: [RESEARCH.md](./RESEARCH.md), [DESIGN.md](./DESIGN.md), [AI_USAGE.md](./AI_USAGE.md).
+- user accounts
+- course structure
+- problem authoring
+- leaderboards
+- payments
+- code execution
+- collaborative editing
+- a full UML editor
+
+These can be added later without changing the core practice journey.
+
+---
+
+## Further reading
+
+- [DESIGN.md](./DESIGN.md) — architecture and technical decisions
+- [RESEARCH.md](./RESEARCH.md) — product research and reasoning behind the MVP
+- [AI_USAGE.md](./AI_USAGE.md) — AI usage, evaluation trust boundary and development process

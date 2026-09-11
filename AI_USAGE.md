@@ -1,92 +1,209 @@
-# AI_USAGE.md
+# AI Usage
 
-Two distinct uses of AI here: AI **inside** the product, and AI used **to build** it.
+There are two distinct uses of AI in this project:
+
+1. AI **inside the product**, where it evaluates learner submissions.
+2. AI **during development**, where AI-assisted tools were used to accelerate implementation.
+
+The important distinction is that model output was treated as something to review and validate, not as an authority.
+
+---
 
 ## 1. AI inside the product
 
 ### Where it runs
 
-`src/infrastructure/evaluators/llm-evaluator.server.ts` (Lovable AI gateway) and
-`src/infrastructure/evaluators/gemini-evaluator.server.ts` (Gemini API directly, for standalone
-runs), both reached only through server functions in `src/lib/practice.functions.ts`. Both share one
-prompt module, `src/domain/evaluation-prompt.ts`, so the constraints below apply identically on either
-path. `.server` modules never enter a browser bundle, so the API keys, the rubric prompt and the
-evaluation instructions stay server-side.
+There are two model-backed evaluator implementations:
 
+- `src/infrastructure/evaluators/llm-evaluator.server.ts` — hosted AI gateway
+- `src/infrastructure/evaluators/gemini-evaluator.server.ts` — direct Gemini API
 
-### What it is asked to do
+Both are reached through server-side application functions.
 
-Score one submission against the eight fixed rubric criteria and return JSON: per criterion a score
-1–5, an exact quote from the submission as evidence, one specific concern, one actionable suggestion,
-and a confidence value; plus overall strengths and improvement areas.
+Both use the same prompt module:
 
-### Prompt constraints, and why
+```text
+src/domain/evaluation-prompt.ts
+```
+
+The `.server` modules stay outside the browser bundle, keeping provider keys and evaluation instructions server-side.
+
+---
+
+### What the model is asked to do
+
+The evaluator scores one learner submission against eight fixed rubric criteria.
+
+For each criterion it returns:
+
+- score: 1–5
+- evidence quoted from the learner's submission
+- one specific concern
+- one actionable suggestion
+- confidence
+
+It also returns overall strengths and improvement areas.
+
+The application derives the overall score itself rather than trusting a model-generated total.
+
+---
+
+## Prompt constraints and why they exist
 
 | Constraint | Reason |
 | --- | --- |
-| "Multiple valid designs exist; do not penalise a valid alternative." | Models drift toward a canonical textbook solution and mark different-but-correct designs down. |
-| Every criterion must quote the submission verbatim. | Makes feedback checkable by the learner and exposes invented criticism. |
-| No claim the evidence does not support. | Blocks generic advice ("consider SOLID") dressed up as a finding. |
-| Exactly one actionable suggestion per criterion. | Eight criteria times three vague tips is unusable. |
-| Fixed JSON shape. | Parseable, and validatable against the rubric before persistence. |
+| Multiple valid designs exist; do not penalise valid alternatives. | Prevents the evaluator from treating one textbook design as the only correct answer. |
+| Every criterion must contain evidence from the submission. | Makes feedback checkable and reduces unsupported criticism. |
+| Do not make claims the evidence does not support. | Prevents generic advice from being presented as a finding. |
+| Exactly one actionable suggestion per criterion. | Keeps feedback focused enough to act on during the next attempt. |
+| Fixed JSON shape. | Makes model output parseable and validates it before persistence. |
 
-### Trust boundary
+---
 
-Model output is untrusted input. `domain/rubric.ts` validates it in one place for every path: all
-eight criteria present and correctly named, scores integer 1–5 (not rounded silently from anything
-else), evidence non-empty, confidence normalised, and the overall score derived by the application
-rather than accepted from the model. Only validated output is persisted. Anything else is a
-controlled failure — the submission is preserved, the attempt and evaluation are marked `FAILED`, and
-the UI offers Retry Evaluation. No partially-parsed feedback is ever stored, and the learner is never
-shown a silent fallback pretending to be a real evaluation.
+## Trust boundary
 
-### The deterministic alternative
+Model output is untrusted input.
 
-`RuleBasedEvaluator` implements the same `Evaluator` interface with no model, no network and no key,
-but it is deliberately narrower than the model evaluators: it validates *structure* — section
-coverage and depth, with evidence quoted from the submission — caps its scores below the top of the
-scale, reports low confidence, and says outright that it is not judging design quality. The UI labels
-its output "structural validation", not "AI design review". It exists because the product must be
-demonstrable and testable without a provider, and because it proves the abstraction is real.
+`domain/rubric.ts` validates evaluator output in one place for every evaluator path:
 
-`practice-service-factory.server.ts` is the only chooser: `LOVABLE_API_KEY` → gateway evaluator, else
-`GEMINI_API_KEY` → direct Gemini evaluator, else rule-based. Each evaluation stores the
-`evaluatorType` that actually ran (`LLM`, `LLM_GEMINI_DIRECT`, `RULE_BASED`), so the label is always
-honest; nothing else in the codebase knows which is in use.
+- all eight criteria must be present
+- criterion names must be valid
+- scores must be integers from 1–5
+- evidence must be present
+- confidence is normalised
+- the overall score is derived by the application
 
+Only validated output is persisted.
 
-## 2. AI used to build this
+If the model returns malformed or unusable output, the system treats that as a controlled failure:
 
-Development was AI-assisted throughout, in an agent-style loop: I described intent and constraints,
-reviewed the produced code, and rejected or reshaped what did not fit.
+- the learner's submission is preserved
+- the evaluation is marked `FAILED`
+- the attempt is marked `FAILED`
+- the UI provides a retry path
 
-**Where it was clearly worth it**
+There is no silent fallback that presents structural feedback as if it were an AI design review.
 
-- Scaffolding: schema and migration, repository plumbing, route wiring, React Query setup.
-- Repetitive shaping: five section definitions, eight rubric criteria, mapping rows to domain types.
-- Test breadth: enumerating illegal state transitions and rubric edge cases.
-- Documentation drafts, then edited down.
+---
 
-**Where I made the calls myself**
+## The deterministic alternative
 
-- Layering, and the rule that the domain imports nothing outward. This is what makes the journey
-  testable and it does not survive being left to an autocomplete.
-- The five-section submission format — the product's central decision.
-- The ordering guarantee in `submit`: persist the submission before evaluating, never roll it back on
-  evaluator failure.
-- Treating model output as untrusted and validating it in the domain.
+`RuleBasedEvaluator` implements the same `Evaluator` interface without a model, network call or API key.
 
-**Corrections I had to make**
+It deliberately has a narrower responsibility:
 
-- Business rules kept drifting into route components; they were pulled back into `PracticeService`.
-- A field-name mismatch between `RuleBasedEvaluator` output and the rubric parser (`criterion` vs
-  `name`) — caught by tests, which is exactly why the deterministic evaluator is tested.
-- A proposed evaluator fallback that silently substituted rule-based scoring for a failed LLM run.
-  Rejected: it hides a failure and mislabels the evaluator that produced the feedback.
-- Test alias resolution needed explicit configuration rather than assuming the app's build config.
+- checks section coverage
+- checks section depth
+- quotes evidence from the learner's text
+- caps scores below the top of the scale
+- reports low confidence
+- explicitly states that it does not judge design quality
 
-**Judgement**
+The UI labels this output **structural validation**, not AI design review.
 
-AI compressed the mechanical work substantially and produced plausible architecture that would have
-been wrong to accept as given. The value came from having firm opinions about boundaries and failure
-behaviour and enforcing them on the output.
+This serves two purposes:
+
+1. the product remains demonstrable without an external model provider
+2. the evaluator abstraction remains testable and meaningful even without AI
+
+---
+
+## Evaluator selection
+
+`practice-service-factory.server.ts` is the only place that chooses the evaluator:
+
+```text
+GEMINI_API_KEY
+      ↓
+GeminiEvaluator
+
+otherwise
+
+LOVABLE_API_KEY
+      ↓
+LlmEvaluator
+
+otherwise
+
+RuleBasedEvaluator
+```
+
+An explicitly configured Gemini key takes priority because the hosted environment may also expose `LOVABLE_API_KEY`. This keeps the direct evaluator reachable when explicitly configured.
+
+Each evaluation stores the evaluator type that actually ran:
+
+- `LLM`
+- `LLM_GEMINI_DIRECT`
+- `RULE_BASED`
+
+The UI uses that stored value to label the feedback honestly.
+
+---
+
+# 2. AI used during development
+
+Development was AI-assisted throughout an agent-style workflow: intent and constraints were specified first, generated implementation was reviewed, and code that did not fit the intended architecture was corrected or rejected.
+
+AI was particularly useful for mechanical and repetitive work.
+
+### Where it was useful
+
+- scaffolding database schema and migrations
+- repository and server-function plumbing
+- route wiring
+- React Query setup
+- repetitive domain mappings
+- generating initial test cases
+- expanding edge-case coverage
+- drafting documentation
+
+### Where engineering judgement mattered most
+
+The important architectural decisions were reviewed and enforced explicitly:
+
+- keeping the domain layer independent of framework and infrastructure
+- making `PracticeService` own the learner journey
+- choosing the five-section submission format
+- separating evaluator implementations behind an interface
+- treating model output as untrusted
+- persisting the learner's submission before invoking an evaluator
+- preserving submissions when evaluation fails
+- making retries operate on the stored submission
+- deriving the overall score in the application rather than accepting it from the model
+
+---
+
+## Corrections made during development
+
+AI-generated implementation was not accepted unchanged.
+
+Examples of corrections included:
+
+- Business rules initially drifted toward route components; they were moved into `PracticeService`.
+- A field-name mismatch between deterministic evaluator output and the rubric parser was caught by tests and corrected.
+- A proposed evaluator fallback would have silently substituted rule-based scoring after an LLM failure. That was rejected because it would hide the failure and mislabel the evaluator that produced the feedback.
+- Test alias resolution required explicit configuration rather than assuming the application's build configuration would automatically apply.
+
+These corrections reinforced the role of tests and architectural boundaries as checks on AI-generated implementation.
+
+---
+
+## Development judgement
+
+AI reduced the amount of mechanical implementation work, but generated code was treated as a starting point rather than as a source of architectural truth.
+
+The useful workflow was:
+
+```text
+Define intent and constraints
+        ↓
+Generate implementation
+        ↓
+Review against architecture
+        ↓
+Test behaviour and edge cases
+        ↓
+Correct or reject output
+```
+
+The goal was not to avoid AI-generated code. It was to make sure the resulting system reflected deliberate product and engineering decisions rather than blindly accepting plausible-looking implementation.

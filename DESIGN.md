@@ -1,141 +1,243 @@
-# DESIGN.md
+# Design
 
 ## Layers
 
 ```text
 routes/                UI. Renders state, dispatches intent. No rules.
-lib/*.functions.ts     RPC boundary. Serialises domain errors into result objects.
-application/           PracticeService. Owns the journey and its ordering guarantees.
-domain/                Pure rules and ports. No framework, no IO, no Supabase, no fetch.
-infrastructure/        Supabase repositories, evaluator implementations, factory.
+lib/*.functions.ts     Server-function boundary. Serialises domain errors
+                       into result objects.
+application/           PracticeService. Owns the journey and its
+                       ordering guarantees.
+domain/                Pure rules and ports. No framework, IO, Supabase
+                       or fetch.
+infrastructure/        Supabase repositories, evaluator implementations
+                       and factory.
 ```
 
-Dependencies point inward only. `domain/` imports nothing from the other layers; `application/`
-imports `domain/` and its ports; `infrastructure/` implements those ports. This is what makes the
-journey testable without a database or a model provider.
+Dependencies point inward only.
+
+`domain/` imports nothing from the other layers. `application/` imports the domain and its ports. `infrastructure/` implements those ports.
+
+This keeps the learner journey testable without a database or model provider and prevents framework concerns from becoming business rules.
+
+---
 
 ## Domain model
 
 | Entity | Role |
 | --- | --- |
-| `Problem` | Seeded, immutable. Slug, difficulty, requirements, prompts. |
-| `Attempt` | One pass at a problem. Numbered per problem, carries the state machine. |
-| `Submission` | The five-section content belonging to an attempt. `STRUCTURED_TEXT` format. |
-| `Evaluation` | One evaluator run: evaluator type, status, overall score, strengths, improvement areas. |
-| `Feedback` | One rubric criterion within an evaluation: score, evidence, concern, suggestion, confidence. |
+| `Problem` | Seeded, immutable problem definition containing slug, difficulty, requirements and prompts. |
+| `Attempt` | One pass at a problem. Numbered per problem and governed by the attempt state machine. |
+| `Submission` | The five-section content belonging to an attempt. Currently `STRUCTURED_TEXT`. |
+| `Evaluation` | One evaluator run containing evaluator type, status, overall score, strengths and improvement areas. |
+| `Feedback` | One rubric criterion within an evaluation: score, evidence, concern, suggestion and confidence. |
 
-`Evaluation` is separate from `Attempt` because an attempt can be evaluated more than once (a failed
-run is retried) and because the evaluator identity belongs to the run, not the attempt. `Feedback`
-is a separate row per criterion rather than a JSON blob so criteria can be queried and compared
-across attempts later.
+`Evaluation` is separate from `Attempt` because an evaluation can fail and be retried without changing the learner's submitted design. It also keeps evaluator identity attached to the evaluation run rather than to the attempt itself.
 
-`format: 'STRUCTURED_TEXT'` is stored on every submission. It is redundant today and deliberate: a
-future diagram or code submission type is a new format value, not a schema migration of existing rows.
+`Feedback` is stored as one row per criterion rather than as an opaque JSON blob so criterion-level results can be queried and compared across attempts later.
+
+`format: "STRUCTURED_TEXT"` is stored on every submission deliberately. A future diagram or code submission type can introduce a new format value without changing the meaning of existing submissions.
+
+---
 
 ## State machine
 
 ```text
 DRAFT ──submit──> SUBMITTED ──> EVALUATING ──> COMPLETED (terminal)
-                                     │
-                                     └──> FAILED ──retry──> EVALUATING
+                                      │
+                                      └──> FAILED ──retry──> EVALUATING
 ```
 
-The transition table lives in `domain/attempt-state-machine.ts` and is the only authority on legality;
-services ask it rather than checking statuses inline. Invariants:
+The transition table in `domain/attempt-state-machine.ts` is the authority on legal transitions.
 
-- Only `DRAFT` accepts content edits, so feedback always refers to text that can no longer change.
-- `COMPLETED` is terminal. Improvement is a new attempt, which is what makes history meaningful.
-- `EVALUATING` is persisted before the evaluator is invoked, so a crash mid-evaluation leaves a row
-  that is visibly stuck rather than a submission that silently never produced feedback.
-- Any illegal transition raises `INVALID_TRANSITION` rather than being ignored.
+### Invariants
+
+- Only `DRAFT` accepts content edits, so completed feedback always refers to immutable submitted text.
+- `COMPLETED` is terminal. Improvement creates a new attempt, which makes history meaningful.
+- `EVALUATING` is persisted before the evaluator is invoked, so a failure is visible rather than disappearing silently.
+- Illegal transitions raise `INVALID_TRANSITION` rather than being ignored.
+
+---
 
 ## Ordering guarantee in `PracticeService.submit`
 
-1. Validate the submission (at least one filled section) — `EMPTY_SUBMISSION` otherwise.
+The submission flow is deliberately ordered:
+
+1. Validate the submission.
 2. Persist the submission content.
 3. Transition `DRAFT → SUBMITTED → EVALUATING`.
 4. Invoke the evaluator.
-5. On success, persist the evaluation and its eight feedback rows, then `COMPLETED`.
-6. On failure, mark evaluation and attempt `FAILED`. **The submission is never rolled back.**
+5. On success, persist the evaluation and its eight feedback rows, then mark the attempt `COMPLETED`.
+6. On failure, mark the evaluation and attempt `FAILED`.
 
-The learner's writing is the thing that must not be lost, so it is written before anything that can
-fail. Retry re-runs step 4 against the stored submission and never asks the learner to retype.
+The submission is never rolled back on evaluator failure.
+
+The learner's writing is the thing that must not be lost, so it is persisted before anything that can fail. Retry evaluates the stored submission again rather than asking the learner to retype it.
+
+---
 
 ## Evaluator abstraction
 
 ```ts
 interface Evaluator {
   readonly type: EvaluatorType;
-  evaluate(request: EvaluationRequest): Promise<EvaluatorOutput>;
+  evaluate(request: EvaluationRequest): Promise<EvaluationResult>;
 }
 ```
 
-Three implementations, all returning the same `EvaluatorOutput`:
+There are three implementations:
 
-- `RuleBasedEvaluator` (`RULE_BASED`) — deterministic and offline, and honest about its limits: it
-  checks section coverage and depth, quotes the learner's own sentences as evidence, caps scores below
-  the top of the scale, reports low confidence and states that it does not assess design quality.
-- `LlmEvaluator` (`LLM`) — server-only, via the Lovable AI gateway.
-- `GeminiEvaluator` (`LLM_GEMINI_DIRECT`) — server-only, calling Gemini directly with a JSON response
-  mime type, so the product still gives real AI review when run outside Lovable's hosting.
+- `RuleBasedEvaluator` (`RULE_BASED`) — deterministic and offline. It checks section coverage and depth, quotes the learner's own sentences as evidence, caps scores below the top of the scale, reports low confidence and explicitly states that it does not assess design quality.
+- `LlmEvaluator` (`LLM`) — server-only evaluator using the hosted AI gateway.
+- `GeminiEvaluator` (`LLM_GEMINI_DIRECT`) — server-only evaluator calling Gemini directly with a structured JSON response.
 
-The two model evaluators share one prompt module (`src/domain/evaluation-prompt.ts`) and one JSON
-contract, so their constraints cannot diverge.
+The two model evaluators share one prompt module (`src/domain/evaluation-prompt.ts`) and one output contract, so their evaluation constraints cannot drift between implementations.
 
-`domain/rubric.ts` validates every evaluator's output before anything is persisted: all eight criteria
-present and named, integer scores 1–5, confidence normalised, evidence non-empty, and the overall
-score derived in the domain from the criterion scores rather than trusted from the model. An evaluator
-cannot corrupt stored feedback — the worst it can do is fail validation, which becomes a `FAILED`
-evaluation with a retry path.
+`domain/rubric.ts` validates every evaluator's output before anything is persisted:
 
-Selection happens in exactly one place, `practice-service-factory.server.ts`, in the order
-`GEMINI_API_KEY` → `LOVABLE_API_KEY` → rule-based. An explicitly set Gemini key wins because
-`LOVABLE_API_KEY` is always present on Lovable Cloud — Gemini-first is the only way to make the
-direct tier reachable in that environment. The stored `evaluatorType` records which path ran,
-and the UI labels rule-based output as structural validation rather than AI review. The application
-layer never learns which evaluator it is holding.
+- all eight criteria are present and correctly named
+- scores are integers from 1–5
+- evidence is non-empty
+- confidence is normalised
+- overall score is derived from the criterion scores rather than trusted from the model
 
-## Prompt design for the LLM evaluators
+An evaluator cannot directly corrupt stored feedback. Invalid output becomes a controlled failed evaluation with a retry path.
 
-The prompt states that multiple valid LLD designs exist and that alternatives must not be penalised;
-requires an exact quote from the submission for every criterion; forbids criticism that the evidence
-does not support; and demands one concrete, actionable suggestion per criterion. Output is a fixed
-JSON shape. Everything about it lives server-side.
+---
 
+## Evaluator selection
+
+Selection happens in exactly one place: `practice-service-factory.server.ts`.
+
+The order is:
+
+```text
+GEMINI_API_KEY
+      ↓
+GeminiEvaluator
+
+otherwise
+
+LOVABLE_API_KEY
+      ↓
+LlmEvaluator
+
+otherwise
+
+RuleBasedEvaluator
+```
+
+An explicitly configured Gemini key takes priority because the hosted environment may also expose `LOVABLE_API_KEY`. This keeps the direct evaluator reachable when explicitly requested.
+
+The stored `evaluatorType` records which evaluator actually ran. The UI displays that tier so feedback is never presented as AI-generated when it came from the deterministic fallback.
+
+The application layer never needs to know which concrete evaluator it received.
+
+---
+
+## Prompt design
+
+The shared evaluation prompt makes several constraints explicit:
+
+- multiple valid LLD designs exist
+- valid alternatives must not be penalised
+- the evaluator should judge only what the learner actually wrote
+- each criterion requires evidence from the submission
+- unsupported criticism is not allowed
+- concerns should describe actual design weaknesses rather than style preferences
+- each criterion receives one actionable suggestion
+- output follows a fixed JSON contract
+
+The prompt is shared by both model evaluators and remains server-side.
+
+---
 
 ## Persistence
 
-Postgres, accessed through repository interfaces defined in `domain/ports.ts`. Foreign keys and
-check constraints hold the shape (valid status values, score ranges, one submission per attempt);
-indexes cover the read paths (attempts by problem, feedback by evaluation). RLS is enabled on every
-table. Nothing is deletable — history is append-only, which is the point of the retry loop.
+Postgres is accessed through repository interfaces defined in `domain/ports.ts`.
+
+Database constraints enforce the important structural invariants:
+
+- valid status values
+- valid score ranges
+- one submission per attempt
+- foreign-key relationships
+
+Indexes cover the main read paths, including attempts by problem and feedback by evaluation.
+
+Row-level security is enabled on the relevant tables, and learner ownership is scoped to the anonymous browser learner identifier.
+
+History is append-oriented: completed attempts are retained rather than overwritten because comparison across attempts is part of the product.
+
+---
 
 ## Testing strategy
 
-Tests target the layers where rules live, using in-memory repository fakes, stub evaluators and a
-fixed clock:
+Tests target the layers where the rules actually live, using in-memory repository fakes, stub evaluators and a fixed clock.
 
-- **State machine** — every legal transition, every illegal one.
-- **Rubric** — validation, clamping, missing criteria, overall score computation.
-- **PracticeService** — the journey: draft saves, empty-submission rejection, duplicate submission,
-  successful evaluation, evaluator failure preserving the submission, retry, attempt numbering.
+### State machine
 
-No test needs a database or a network call, because no rule depends on either.
+Tests cover every legal transition and illegal transition.
+
+### Rubric
+
+Tests cover validation, missing criteria, score handling and overall score computation.
+
+### PracticeService
+
+Tests cover:
+
+- draft saves
+- empty-submission rejection
+- duplicate submission
+- successful evaluation
+- evaluator failure
+- preservation of the submission after failure
+- retry
+- attempt numbering
+- learner ownership
+- history
+
+The core application tests do not need a database or network call because the rules do not depend on either.
+
+---
 
 ## Known trade-offs
 
-- **Anonymous attempts** — history is browser-scoped, not account-scoped. Cheap to add later.
-- **Synchronous evaluation** — the learner waits for the model call. A queue would survive restarts
-  and let the page be closed; it also adds infrastructure that a two-day scope does not need.
-- **Text-only evidence** — quoting works for prose but not for a diagram, which a future submission
-  format would need to solve differently.
+### Anonymous attempts
 
-`SUBMITTED` is a transient state — `DRAFT → SUBMITTED → EVALUATING` transitions synchronously in
-`submitAttempt`, so the learner never observes the `SUBMITTED` status; it exists to guarantee the
-submission row is persisted before evaluation begins.
+History is browser-scoped rather than account-scoped. This avoids authentication work in the MVP while leaving a clear path to populate the same learner ownership field from a real session later.
 
-Evaluator tiers are auto-selected server-side; the active tier is disclosed on the attempt screen
-before submission and recorded on every stored evaluation. A learner-facing tier toggle was
-considered and rejected: choosing an evaluator is an infrastructure concern, not part of the design
-exercise, and a toggle toward an unconfigured tier would invite fake or failing feedback. Honest
-labeling keeps the same transparency without the extra state.
+### Synchronous evaluation
+
+The learner waits for the model call. A queue and worker would survive restarts better and allow evaluation to continue after the page closes, but would introduce infrastructure that is unnecessary for this MVP.
+
+### Text-only evidence
+
+Quoting evidence works naturally for structured prose. A future diagram or code submission type would need a different evidence representation.
+
+### Small problem library
+
+Three problems are enough to demonstrate the complete learner journey. A larger content-management system would move effort away from the core feedback loop.
+
+---
+
+## Transient `SUBMITTED` state
+
+`SUBMITTED` is intentionally persisted as part of the transition sequence:
+
+```text
+DRAFT → SUBMITTED → EVALUATING
+```
+
+The transition currently happens synchronously inside `submitAttempt`, so the learner normally does not observe `SUBMITTED` as a long-lived state.
+
+It exists to make the ordering explicit: the submission is accepted before evaluation starts.
+
+---
+
+## Evaluator transparency
+
+Evaluator tiers are selected server-side and the active tier is disclosed on the attempt screen before submission. The selected evaluator type is also stored with the evaluation.
+
+A learner-facing evaluator toggle was considered and rejected. Choosing an evaluator is an infrastructure concern rather than part of the LLD exercise, and a toggle could expose an unconfigured or failing provider. Honest evaluator labelling provides transparency without adding unnecessary product state.
