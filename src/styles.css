@@ -1,0 +1,151 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * LLD Practice Lab design system.
+ * Dark, technical, restrained: near-black canvas, hairline borders, one cool
+ * accent, mono for structural labels. All colors are oklch tokens.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 3px);
+  --radius-md: calc(var(--radius) - 1px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-foreground: var(--surface-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+:root {
+  --radius: 0.5rem;
+  --background: oklch(0.17 0.012 250);
+  --foreground: oklch(0.95 0.005 250);
+  --surface: oklch(0.21 0.014 250);
+  --surface-foreground: oklch(0.95 0.005 250);
+  --card: oklch(0.205 0.014 250);
+  --card-foreground: oklch(0.95 0.005 250);
+  --popover: oklch(0.23 0.014 250);
+  --popover-foreground: oklch(0.95 0.005 250);
+  --primary: oklch(0.78 0.115 195);
+  --primary-foreground: oklch(0.18 0.02 220);
+  --secondary: oklch(0.27 0.015 250);
+  --secondary-foreground: oklch(0.93 0.005 250);
+  --muted: oklch(0.25 0.013 250);
+  --muted-foreground: oklch(0.68 0.014 250);
+  --accent: oklch(0.28 0.02 220);
+  --accent-foreground: oklch(0.93 0.01 220);
+  --destructive: oklch(0.65 0.17 25);
+  --destructive-foreground: oklch(0.98 0.005 250);
+  --success: oklch(0.75 0.14 155);
+  --warning: oklch(0.8 0.13 85);
+  --border: oklch(0.29 0.012 250);
+  --border-strong: oklch(0.38 0.015 250);
+  --input: oklch(0.24 0.013 250);
+  --ring: oklch(0.78 0.115 195);
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
+
+  textarea,
+  input {
+    font-family: inherit;
+  }
+}
+
+@utility label-mono {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+}
+
+@utility panel {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background-color: var(--color-card);
+}
+
+@utility btn-base {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: var(--radius-md);
+  padding: 0.5rem 0.95rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+  cursor: pointer;
+}
+
+@utility btn-primary {
+  background-color: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+@utility btn-outline {
+  border-color: var(--color-border-strong);
+  background-color: transparent;
+  color: var(--color-foreground);
+}
+
+@utility btn-ghost {
+  background-color: transparent;
+  color: var(--color-muted-foreground);
+}
