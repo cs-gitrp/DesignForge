@@ -84,6 +84,42 @@ Invalid or incomplete evaluator output is rejected before persistence.
 
 ---
 
+
+### Architecture diagram
+
+```mermaid
+flowchart TD
+    UI["React Routes / UI"]
+    SF["Server Functions"]
+    APP["PracticeService"]
+    DOMAIN["Domain Layer"]
+    PORTS["Repository + Evaluator Ports"]
+    INFRA["Infrastructure"]
+    DB[("Supabase / Postgres")]
+    EVAL["Evaluator Factory"]
+    LLM["LLM Evaluator"]
+    GEMINI["Gemini Direct Evaluator"]
+    RULE["Rule-Based Evaluator"]
+
+    UI --> SF
+    SF --> APP
+    APP --> DOMAIN
+    APP --> PORTS
+
+    PORTS --> INFRA
+    INFRA --> DB
+    INFRA --> EVAL
+
+    EVAL --> LLM
+    EVAL --> GEMINI
+    EVAL --> RULE
+
+    LLM --> AI["AI Provider"]
+    GEMINI --> AI
+
+---
+
+
 ## Architecture
 
 ```text
