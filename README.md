@@ -1,4 +1,4 @@
-# DesignForge
+# LLD Practice Lab
 
 A focused practice tool for low-level design interviews. The product is built around one learner journey:
 
@@ -33,7 +33,7 @@ No sign-in is required. Attempts are anonymous and scoped to the browser through
 | `/` | Problem library with the three problems. |
 | `/problems/$problemId` | Requirements and prompts to think about, then Start Practice. |
 | `/attempt/$attemptId` | Five structured sections. Save Draft any time; Submit for Review locks the attempt. |
-| evaluation | The attempt moves `SUBMITTED → EVALUATING`, an evaluator scores it, and the result is persisted. |
+| Evaluation | The attempt moves `SUBMITTED → EVALUATING`, an evaluator scores it, and the result is persisted. |
 | `/attempt/$attemptId/feedback` | Overall score, strengths, improvement areas, and one card per rubric criterion with score, evidence quote, concern, suggestion and confidence. |
 | Try Again | Starts a fresh attempt on the same problem; the previous attempt and feedback remain in history. |
 | `/history` | Attempts grouped by problem, with scores, progress and criterion-level movement between completed attempts. |
@@ -84,43 +84,43 @@ Invalid or incomplete evaluator output is rejected before persistence.
 
 ---
 
-
-### Architecture diagram
-
-```mermaid
-flowchart TD
-    UI["React Routes / UI"]
-    SF["Server Functions"]
-    APP["PracticeService"]
-    DOMAIN["Domain Layer"]
-    PORTS["Repository + Evaluator Ports"]
-    INFRA["Infrastructure"]
-    DB[("Supabase / Postgres")]
-    EVAL["Evaluator Factory"]
-    LLM["LLM Evaluator"]
-    GEMINI["Gemini Direct Evaluator"]
-    RULE["Rule-Based Evaluator"]
-
-    UI --> SF
-    SF --> APP
-    APP --> DOMAIN
-    APP --> PORTS
-
-    PORTS --> INFRA
-    INFRA --> DB
-    INFRA --> EVAL
-
-    EVAL --> LLM
-    EVAL --> GEMINI
-    EVAL --> RULE
-
-    LLM --> AI["AI Provider"]
-    GEMINI --> AI
-
----
-
-
 ## Architecture
+
+```text
+┌──────────────────────────────┐
+│          Routes / UI         │
+│       React components       │
+└──────────────┬───────────────┘
+               │
+               ▼
+┌──────────────────────────────┐
+│       Server Functions       │
+│       RPC / app boundary     │
+└──────────────┬───────────────┘
+               │
+               ▼
+┌──────────────────────────────┐
+│       PracticeService        │
+│   learner journey + rules    │
+└──────────────┬───────────────┘
+               │
+               ▼
+┌──────────────────────────────┐
+│           Domain             │
+│ state machine • rubric •     │
+│ submission • evaluator ports │
+└──────────────┬───────────────┘
+               │
+       ┌───────┴────────┐
+       ▼                ▼
+┌───────────────┐  ┌────────────────┐
+│  Repositories │  │   Evaluators   │
+│    Supabase   │  │ LLM / Gemini / │
+│    / Postgres │  │ Rule-based     │
+└───────────────┘  └────────────────┘
+```
+
+Project structure:
 
 ```text
 src/domain/           Pure rules: state machine, submission format,
@@ -134,9 +134,9 @@ src/infrastructure/   Supabase repositories, evaluator implementations
 
 src/lib/              Server functions and query options
 
-src/routes/           UI and route-level rendering
+src/routes/            UI and route-level rendering
 
-tests/                Unit tests using in-memory repositories and
+tests/                 Unit tests using in-memory repositories and
                       stub evaluators
 ```
 
