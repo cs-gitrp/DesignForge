@@ -208,50 +208,6 @@ A larger content library can be added once the feedback loop proves useful.
 
 ---
 
-## Deliberate omissions
-
-### No authentication
-
-Authentication adds signup and account-management work without testing the core learning loop.
-
-Attempts are therefore anonymous but owned. Each browser receives an opaque learner identifier in an HTTP-only cookie, and reads/writes are scoped to that learner.
-
-A future account system can populate the same ownership field from a real session rather than changing the core domain model.
-
-### No editing after submit
-
-Editing a submitted attempt would change the text that the feedback refers to.
-
-Instead, submission locks the attempt and improvement happens through a new attempt.
-
-This preserves the integrity of the history:
-
-```text
-Attempt 1
-→ feedback for Attempt 1
-
-Attempt 2
-→ feedback for Attempt 2
-```
-
-### No code execution
-
-The MVP focuses on object-oriented structure and reasoning rather than running implementation code.
-
-Code execution would introduce another evaluation dimension, sandboxing concerns and significantly more infrastructure.
-
-### No full UML editor
-
-Visual modelling is useful, but building a robust UML editor would consume a large portion of the MVP without directly testing the feedback loop.
-
-The structured text format captures the reasoning while keeping the submission surface simple.
-
-### No large problem catalogue
-
-Problem authoring, tagging, search and content management are secondary to proving that learners can practice, receive useful feedback and improve.
-
----
-
 ## Evaluation design research
 
 A major design question was whether the AI should compare submissions against a reference solution.
